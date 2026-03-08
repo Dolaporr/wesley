@@ -1,4 +1,6 @@
 const PUMP_PROGRAM_ID = "6EF8rrecthR5DkzonEZu5uWDNKrGLuVPm26PCJZiUJFN";
+const SEEN_SIGNATURES = new Set();
+const MAX_SEEN_SIGNATURES = 1000;
 
 function parseBody(body) {
   if (!body) return [];
@@ -40,6 +42,96 @@ function extractMint(tx) {
   }
 
   return null;
+}
+
+function extractSymbol(tx) {
+  if (!tx || typeof tx !== "object") return null;
+
+  const transferSymbol = tx.tokenTransfers?.find((t) => t?.tokenSymbol)?.tokenSymbol;
+  if (transferSymbol) return transferSymbol;
+
+  return null;
+}
+
+function rememberSignature(signature) {
+  if (!signature) return false;
+  if (SEEN_SIGNATURES.has(signature)) return true;
+  SEEN_SIGNATURES.add(signature);
+  if (SEEN_SIGNATURES.size > MAX_SEEN_SIGNATURES) {
+    const oldest = SEEN_SIGNATURES.values().next().value;
+    SEEN_SIGNATURES.delete(oldest);
+  }
+  return false;
+}
+
+function buildAlert(tx) {
+  const signature = tx.signature || null;
+  const mint = extractMint(tx);
+  const symbol = extractSymbol(tx);
+  const txType = tx.type || "ACTIVITY";
+  const timestampMs =
+    typeof tx.timestamp === "number" ? tx.timestamp * 1000 : Date.now();
+
+  return {
+    id: signature || undefined,
+    time: timestampMs,
+    type: "PUMP_ACTIVITY",
+    source: "helius",
+    symbol,
+    mint,
+    signature,
+    message: `Pump ${txType}`,
+  };
+}
+
+function resolveBaseUrl(event) {
+  const explicit = process.env.SITE_URL || process.env.URL || "";
+  if (explicit) return explicit.replace(/\/$/, "");
+
+  const proto = event.headers?.["x-forwarded-proto"] || "https";
+  const host = event.headers?.["x-forwarded-host"] || event.headers?.host || "";
+  if (!host) return null;
+  return `${proto}://${host}`;
+}
+
+async function forwardAlertsToApp(event, alerts, requestId, authHeader) {
+  if (!alerts.length) return { ok: true, added: 0, status: 200 };
+
+  const baseUrl = resolveBaseUrl(event);
+  if (!baseUrl) {
+    console.warn(
+      `[helius-webhook] requestId=${requestId} ingest_skipped reason=missing_base_url`
+    );
+    return { ok: false, added: 0, status: 0 };
+  }
+
+  const endpoint = `${baseUrl}/api/alerts`;
+  try {
+    const resp = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: authHeader,
+      },
+      body: JSON.stringify(alerts),
+    });
+
+    const json = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      console.warn(
+        `[helius-webhook] requestId=${requestId} ingest_failed status=${resp.status} endpoint=${endpoint}`
+      );
+      return { ok: false, added: 0, status: resp.status };
+    }
+
+    const added = Number(json?.added) || alerts.length;
+    return { ok: true, added, status: resp.status };
+  } catch (err) {
+    console.error(
+      `[helius-webhook] requestId=${requestId} ingest_error message=${err.message}`
+    );
+    return { ok: false, added: 0, status: 0 };
+  }
 }
 
 exports.handler = async (event) => {
@@ -88,18 +180,33 @@ exports.handler = async (event) => {
   }
 
   const pumpEvents = events.filter(isPumpRelatedEvent);
+  const alertBatch = [];
 
   for (const tx of pumpEvents) {
+    if (rememberSignature(tx.signature)) {
+      continue;
+    }
+
     const mint = extractMint(tx);
+    const symbol = extractSymbol(tx);
     console.log(
       `[helius-webhook] Pump event: signature=${tx.signature || "unknown"} mint=${
         mint || "unknown"
-      } type=${tx.type || "unknown"}`
+      } symbol=${symbol || "unknown"} type=${tx.type || "unknown"}`
     );
+
+    alertBatch.push(buildAlert(tx));
   }
 
+  const ingest = await forwardAlertsToApp(
+    event,
+    alertBatch,
+    requestId,
+    configuredSecret
+  );
+
   console.log(
-    `[helius-webhook] requestId=${requestId} auth=ok events=${events.length} pumpEvents=${pumpEvents.length} status=200`
+    `[helius-webhook] requestId=${requestId} auth=ok events=${events.length} pumpEvents=${pumpEvents.length} alertsSent=${alertBatch.length} alertsAdded=${ingest.added} ingestStatus=${ingest.status} status=200`
   );
 
   return {

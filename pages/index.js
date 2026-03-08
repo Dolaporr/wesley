@@ -446,21 +446,34 @@ function Dashboard() {
               {alerts.length === 0 ? (
                 <div style={{ fontSize: 10, color: "var(--text-muted)", fontStyle: "italic" }}>No alerts yet</div>
               ) : (
-                alerts.slice(0, 5).map((alert, i) => (
-                  <div key={i} style={{ 
-                    display: "flex", 
-                    alignItems: "center", 
-                    gap: 6, 
-                    padding: "6px 8px", 
-                    marginBottom: 4, 
-                    background: "rgba(240,62,95,0.1)", 
-                    borderRadius: 4,
-                    borderLeft: "2px solid var(--red)"
-                  }}>
-                    <span style={{ fontSize: 10, color: "var(--red)", fontWeight: 700 }}>🚨 DEV SOLD {alert.soldPct}%</span>
-                    <span style={{ fontSize: 9, color: "var(--text-muted)" }}>{alert.symbol}</span>
-                  </div>
-                ))
+                alerts.slice(0, 5).map((alert, i) => {
+                  const isDevSell = alert.type === "DEV_SELL";
+                  const accent = isDevSell ? "var(--red)" : "var(--yellow)";
+                  const bg = isDevSell ? "rgba(240,62,95,0.1)" : "rgba(240,192,64,0.1)";
+                  const title = isDevSell
+                    ? `DEV SOLD ${alert.soldPct}%`
+                    : (alert.message || alert.type || "ALERT");
+                  const mintShort = alert.mint
+                    ? `${alert.mint.slice(0, 4)}...${alert.mint.slice(-4)}`
+                    : "";
+                  const subtitle = alert.symbol || mintShort || "Pump.fun";
+
+                  return (
+                    <div key={alert.id || alert.signature || i} style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "6px 8px",
+                      marginBottom: 4,
+                      background: bg,
+                      borderRadius: 4,
+                      borderLeft: `2px solid ${accent}`
+                    }}>
+                      <span style={{ fontSize: 10, color: accent, fontWeight: 700 }}>{title}</span>
+                      <span style={{ fontSize: 9, color: "var(--text-muted)" }}>{subtitle}</span>
+                    </div>
+                  );
+                })
               )}
             </div>
 

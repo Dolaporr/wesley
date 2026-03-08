@@ -3,7 +3,7 @@
 // to avoid hammering free tier API limits.
 
 import { fetchNewPumpTokens, analyzeRug, watchDevWallet } from "../../lib/tokenData";
-import { recentAlerts } from "./_store";
+import { addAlert } from "./_store";
 
 // ─── Simple in-memory cache ───────────────────────────────────────────────────
 let cache = { tokens: [], updatedAt: 0 };
@@ -12,20 +12,15 @@ let initialLoadDone = false;
 const alertedMints = new Set();
 
 // ─── Dev Wallet Alerts ───────────────────────────────────────────────────────
-const MAX_ALERTS = 20;
-
 function addDevSellAlert(symbol, mint, soldPct) {
-  recentAlerts.unshift({
+  addAlert({
     time: Date.now(),
     type: "DEV_SELL",
+    source: "engine",
     symbol,
     mint,
     soldPct,
   });
-  // Keep only last MAX_ALERTS
-  if (recentAlerts.length > MAX_ALERTS) {
-    recentAlerts.pop();
-  }
 }
 
 // ─── Volume Spike Detection ───────────────────────────────────────────────────
