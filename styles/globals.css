@@ -1,0 +1,101 @@
+/* 
+  BUG FIX: ":root" selectors CANNOT go in *.module.css files.
+  CSS Modules require all selectors to be "pure" (scoped to a class or id).
+  Global selectors like :root, *, body must live here in globals.css instead.
+*/
+
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700;800;900&display=swap');
+
+:root {
+  color-scheme: dark;
+  --bg-base: #05050a;
+  --bg-surface: #0a0a12;
+  --bg-elevated: #0f0f1a;
+  --bg-hover: #141422;
+  --border-subtle: #141428;
+  --border-default: #1e1e35;
+  --border-accent: #2a2a4a;
+  --text-primary: #e2e2f0;
+  --text-secondary: #7070a0;
+  --text-muted: #363660;
+  --red: #f03e5f;
+  --orange: #f07820;
+  --yellow: #f0c040;
+  --green: #20c060;
+  --blue: #4090f0;
+  --purple: #9060f0;
+  --font-mono: 'IBM Plex Mono', 'JetBrains Mono', monospace;
+  --font-display: 'Barlow Condensed', sans-serif;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  cursor: crosshair;
+  font-variant-numeric: tabular-nums;
+}
+
+::selection {
+  background: rgba(240,62,95,0.3);
+  color: #fff;
+}
+
+/* Noise texture overlay */
+body::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.03;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+}
+
+::-webkit-scrollbar {
+  width: 4px;
+  background: var(--bg-surface);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-accent);
+  border-radius: 2px;
+}
+
+@keyframes ping {
+  0%, 100% { transform: scale(1.8); opacity: 0.4; }
+  50% { transform: scale(2.8); opacity: 0; }
+}
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+.token-row:hover { background: var(--bg-hover) !important; cursor: crosshair; }
+.filter-btn { cursor: pointer; border: none; transition: all 0.15s; }
+.filter-btn:hover { opacity: 0.8; }
+.wallet-adapter-button {
+  font-family: var(--font-mono) !important;
+  font-size: 11px !important;
+  height: 32px !important;
+  padding: 0 14px !important;
+  background: var(--bg-elevated) !important;
+  border: 1px solid var(--border-accent) !important;
+  border-radius: 6px !important;
+}
+.wallet-adapter-button:hover { background: var(--bg-hover) !important; }
