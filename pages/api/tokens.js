@@ -9,6 +9,8 @@ import { addAlert } from "./_store";
 let cache = { tokens: [], updatedAt: 0 };
 const CACHE_TTL = 10_000; // 10 seconds
 let initialLoadDone = false;
+let enrichmentInFlight = false;
+let lastEnrichmentAt = 0;
 const alertedMints = new Set();
 
 // ─── Dev Wallet Alerts ───────────────────────────────────────────────────────
@@ -123,6 +125,24 @@ async function enrichWithRug(tokens) {
   }
 }
 
+function scheduleRugEnrichment(tokens) {
+  if (enrichmentInFlight) return;
+  // After initial warm-up, avoid launching enrichment too frequently.
+  if (initialLoadDone && Date.now() - lastEnrichmentAt < CACHE_TTL) return;
+
+  enrichmentInFlight = true;
+  lastEnrichmentAt = Date.now();
+
+  enrichWithRug(tokens)
+    .catch((err) => {
+      console.error("[/api/tokens] background enrich failed:", err.message);
+    })
+    .finally(() => {
+      enrichmentInFlight = false;
+      initialLoadDone = true;
+    });
+}
+
 function chunkArray(arr, size) {
   return Array.from({ length: Math.ceil(arr.length / size) }, (_, i) =>
     arr.slice(i * size, i * size + size)
@@ -143,14 +163,9 @@ export default async function handler(req, res) {
       
       // Update volume history before enrichment
       updateVolumeHistory(cache.tokens);
-      
-      if (!initialLoadDone) {
-        await enrichWithRug(cache.tokens);
-        initialLoadDone = true;
-      } else {
-        // Kick off background rug enrichment (non-blocking)
-        enrichWithRug(cache.tokens).catch(console.error);
-      }
+
+      // Always keep response fast in serverless; enrich asynchronously.
+      scheduleRugEnrichment(cache.tokens);
     } catch (err) {
       console.error("[/api/tokens] fetch failed:", err.message);
       // Return stale cache rather than error
