@@ -43,7 +43,21 @@ function extractMint(tx) {
 }
 
 exports.handler = async (event) => {
+  const requestId =
+    event.headers?.["x-nf-request-id"] ||
+    event.headers?.["X-Nf-Request-Id"] ||
+    "unknown";
+  const method = event.httpMethod || "unknown";
+  const hasBody = Boolean(event.body);
+
+  console.log(
+    `[helius-webhook] request received requestId=${requestId} method=${method} hasBody=${hasBody}`
+  );
+
   if (event.httpMethod !== "POST") {
+    console.log(
+      `[helius-webhook] requestId=${requestId} rejected status=405 reason=method_not_allowed`
+    );
     return { statusCode: 405, body: "Method Not Allowed" };
   }
 
@@ -52,16 +66,24 @@ exports.handler = async (event) => {
     event.headers?.authorization || event.headers?.Authorization || "";
 
   if (!configuredSecret) {
-    console.error("[helius-webhook] HELIUS_AUTH_HEADER is not configured");
+    console.error(
+      `[helius-webhook] requestId=${requestId} rejected status=500 reason=missing_env_secret`
+    );
     return { statusCode: 500, body: "Server misconfigured" };
   }
 
   if (incomingAuth !== configuredSecret) {
+    console.warn(
+      `[helius-webhook] requestId=${requestId} rejected status=401 reason=auth_mismatch`
+    );
     return { statusCode: 401, body: "Unauthorized" };
   }
 
   const events = parseBody(event.body);
   if (events.length === 0) {
+    console.log(
+      `[helius-webhook] requestId=${requestId} auth=ok events=0 pumpEvents=0 status=200`
+    );
     return { statusCode: 200, body: JSON.stringify({ received: true, count: 0 }) };
   }
 
@@ -75,6 +97,10 @@ exports.handler = async (event) => {
       } type=${tx.type || "unknown"}`
     );
   }
+
+  console.log(
+    `[helius-webhook] requestId=${requestId} auth=ok events=${events.length} pumpEvents=${pumpEvents.length} status=200`
+  );
 
   return {
     statusCode: 200,
