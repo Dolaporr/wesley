@@ -6,13 +6,23 @@ import { fetchNewPumpTokens, analyzeRug, watchDevWallet } from "../../lib/tokenD
 import { addAlert } from "./_store";
 
 // ─── Simple in-memory cache ───────────────────────────────────────────────────
-let cache = { tokens: [], updatedAt: 0 };
+let cache = { tokens: [], updatedAt: 0, launchWindowMinutesUsed: 0 };
 const CACHE_TTL = 10_000; // 10 seconds
 const MAX_LAUNCH_AGE_MINUTES = Math.max(
   1,
   Number(process.env.MAX_LAUNCH_AGE_MINUTES || 120)
 );
-const MAX_LAUNCH_AGE_MS = MAX_LAUNCH_AGE_MINUTES * 60 * 1000;
+const MIN_LAUNCH_RESULTS = Math.max(
+  1,
+  Number(process.env.MIN_LAUNCH_RESULTS || 8)
+);
+const LAUNCH_WINDOW_TIERS_MINUTES = Array.from(
+  new Set([
+    MAX_LAUNCH_AGE_MINUTES,
+    Math.max(MAX_LAUNCH_AGE_MINUTES, 360), // 6h fallback
+    Math.max(MAX_LAUNCH_AGE_MINUTES, 1440), // 24h fallback
+  ])
+).sort((a, b) => a - b);
 let initialLoadDone = false;
 let enrichmentInFlight = false;
 let lastEnrichmentAt = 0;
@@ -148,11 +158,52 @@ function scheduleRugEnrichment(tokens) {
     });
 }
 
-function isWithinLaunchWindow(token, nowMs) {
-  const createdAt = Number(token?.createdAt || 0);
+function normalizeCreatedAt(raw) {
+  const value = Number(raw || 0);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  // Some providers may return seconds; normalize to milliseconds.
+  return value < 1e12 ? value * 1000 : value;
+}
+
+function isWithinLaunchWindow(token, nowMs, windowMs) {
+  const createdAt = normalizeCreatedAt(token?.createdAt);
   if (!Number.isFinite(createdAt) || createdAt <= 0) return false;
   if (createdAt > nowMs) return false;
-  return nowMs - createdAt <= MAX_LAUNCH_AGE_MS;
+  return nowMs - createdAt <= windowMs;
+}
+
+function selectRecentLaunches(tokens, nowMs) {
+  const normalized = tokens
+    .filter(Boolean)
+    .map((tok) => {
+      const createdAt = normalizeCreatedAt(tok.createdAt);
+      return createdAt > 0 ? { ...tok, createdAt } : tok;
+    })
+    .sort((a, b) => normalizeCreatedAt(b.createdAt) - normalizeCreatedAt(a.createdAt));
+
+  let picked = [];
+  let windowUsed = LAUNCH_WINDOW_TIERS_MINUTES[LAUNCH_WINDOW_TIERS_MINUTES.length - 1];
+
+  for (const minutes of LAUNCH_WINDOW_TIERS_MINUTES) {
+    const windowMs = minutes * 60 * 1000;
+    const inWindow = normalized.filter((t) => isWithinLaunchWindow(t, nowMs, windowMs));
+    if (inWindow.length >= MIN_LAUNCH_RESULTS) {
+      picked = inWindow.slice(0, 50);
+      windowUsed = minutes;
+      break;
+    }
+    // Keep latest attempt so we still return "best available" if counts stay low.
+    picked = inWindow.slice(0, 50);
+    windowUsed = minutes;
+  }
+
+  // If all windows are empty due to missing createdAt, fall back to newest available.
+  if (!picked.length) {
+    picked = normalized.slice(0, 50);
+    windowUsed = 0;
+  }
+
+  return { tokens: picked, windowUsed };
 }
 
 function chunkArray(arr, size) {
@@ -170,15 +221,14 @@ export default async function handler(req, res) {
 
   if (stale) {
     try {
-      // Pull a wider pool first, then keep only very recent launches.
+      // Pull a wider pool first, then pick the newest launches with window fallback.
       const fresh = await fetchNewPumpTokens(120);
-      const launches = fresh
-        .filter(Boolean)
-        .filter((t) => isWithinLaunchWindow(t, now))
-        .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
-        .slice(0, 50);
-
-      cache = { tokens: launches, updatedAt: now };
+      const launchSelection = selectRecentLaunches(fresh, now);
+      cache = {
+        tokens: launchSelection.tokens,
+        updatedAt: now,
+        launchWindowMinutesUsed: launchSelection.windowUsed,
+      };
       
       // Update volume history before enrichment
       updateVolumeHistory(cache.tokens);
@@ -211,5 +261,7 @@ export default async function handler(req, res) {
     updatedAt: cache.updatedAt,
     count: enriched.length,
     launchWindowMinutes: MAX_LAUNCH_AGE_MINUTES,
+    launchWindowMinutesUsed: cache.launchWindowMinutesUsed,
+    minLaunchResults: MIN_LAUNCH_RESULTS,
   });
 }
