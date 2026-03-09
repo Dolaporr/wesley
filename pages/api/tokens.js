@@ -8,6 +8,11 @@ import { addAlert } from "./_store";
 // ─── Simple in-memory cache ───────────────────────────────────────────────────
 let cache = { tokens: [], updatedAt: 0 };
 const CACHE_TTL = 10_000; // 10 seconds
+const MAX_LAUNCH_AGE_MINUTES = Math.max(
+  1,
+  Number(process.env.MAX_LAUNCH_AGE_MINUTES || 120)
+);
+const MAX_LAUNCH_AGE_MS = MAX_LAUNCH_AGE_MINUTES * 60 * 1000;
 let initialLoadDone = false;
 let enrichmentInFlight = false;
 let lastEnrichmentAt = 0;
@@ -143,6 +148,13 @@ function scheduleRugEnrichment(tokens) {
     });
 }
 
+function isWithinLaunchWindow(token, nowMs) {
+  const createdAt = Number(token?.createdAt || 0);
+  if (!Number.isFinite(createdAt) || createdAt <= 0) return false;
+  if (createdAt > nowMs) return false;
+  return nowMs - createdAt <= MAX_LAUNCH_AGE_MS;
+}
+
 function chunkArray(arr, size) {
   return Array.from({ length: Math.ceil(arr.length / size) }, (_, i) =>
     arr.slice(i * size, i * size + size)
@@ -158,8 +170,15 @@ export default async function handler(req, res) {
 
   if (stale) {
     try {
-      const fresh = await fetchNewPumpTokens(50);
-      cache = { tokens: fresh.filter(Boolean), updatedAt: now };
+      // Pull a wider pool first, then keep only very recent launches.
+      const fresh = await fetchNewPumpTokens(120);
+      const launches = fresh
+        .filter(Boolean)
+        .filter((t) => isWithinLaunchWindow(t, now))
+        .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+        .slice(0, 50);
+
+      cache = { tokens: launches, updatedAt: now };
       
       // Update volume history before enrichment
       updateVolumeHistory(cache.tokens);
@@ -191,5 +210,6 @@ export default async function handler(req, res) {
     tokens: enriched,
     updatedAt: cache.updatedAt,
     count: enriched.length,
+    launchWindowMinutes: MAX_LAUNCH_AGE_MINUTES,
   });
 }
